@@ -29,6 +29,7 @@ def call_docker_run(
     env={},
     set_user=False,
     mounts={},
+    privledged=False,
     name=None):
 
     docker_path = get_docker_path()
@@ -47,6 +48,9 @@ def call_docker_run(
         cmd.extend( ["--name", name])
     for k, v in mounts.items():
         cmd.extend( ["-v", "%s:%s" % (k, v)])
+    if privledged:
+        cmd.append("--privileged")
+        cmd.extend( ['-v', '/var/run/docker.sock:/var/run/docker.sock'] )
     cmd.append("-d")
     cmd.extend( [docker_tag] )
     cmd.extend(args)
@@ -135,10 +139,13 @@ def run_up(args):
     }
 
     mounts = {}
+    privledged = False
 
     if args.tool_data is not None:
         mounts[os.path.abspath(args.tool_data)] = "/tool_data"
         env['GALAXY_CONFIG_TOOL_DATA_PATH'] = "/tool_data"
+
+    config_dir = None
 
     if args.tool_dir is not None:
         mounts[os.path.abspath(args.tool_dir)] = "/tools_import"
@@ -146,8 +153,16 @@ def run_up(args):
         mounts[config_dir] = "/config"
         with open( os.path.join(config_dir, "import_tool_conf.xml"), "w" ) as handle:
             handle.write(TOOL_IMPORT_CONF)
-        env['GALAXY_CONFIG_TOOL_CONFIG_FILE'] = "config/tool_conf.xml,/config/import_tool_conf.xml"
+        env['GALAXY_CONFIG_TOOL_CONFIG_FILE'] = "config/tool_conf.xml.main,/config/import_tool_conf.xml"
 
+    if args.child:
+        if config_dir is None:
+            config_dir = os.path.abspath(tempfile.mkdtemp(dir=args.work_dir, prefix="galaxy_warpconfig_"))
+            mounts[config_dir] = "/config"
+        with open( os.path.join(config_dir, "job_conf.xml"), "w" ) as handle:
+            handle.write(JOB_CHILD_CONF)
+        env["GALAXY_CONFIG_JOB_CONFIG_FILE"] = "/config/job_conf.xml" 
+        privledged=True
 
     call_docker_run(
         args.tag,
@@ -155,6 +170,7 @@ def run_up(args):
         host=args.host,
         name=args.name,
         mounts=mounts,
+        privledged=privledged,
         env=env
     )
 
@@ -218,6 +234,34 @@ TOOL_IMPORT_CONF = """<?xml version='1.0' encoding='utf-8'?>
     <tool_dir dir="/tools_import"/>
   </section>
 </toolbox>
+"""
+
+JOB_CHILD_CONF = """<?xml version="1.0"?>
+<job_conf>
+    <plugins workers="2">
+        <plugin id="slurm" type="runner" load="galaxy.jobs.runners.slurm:SlurmJobRunner">
+            <param id="drmaa_library_path">/usr/lib/slurm-drmaa/lib/libdrmaa.so</param>
+        </plugin>
+    </plugins>
+    <handlers default="handlers">
+        <handler id="handler0" tags="handlers"/>
+        <handler id="handler1" tags="handlers"/>
+    </handlers>
+    <destinations default="cluster">
+        <destination id="cluster" runner="slurm">
+            <param id="docker_enabled">true</param>
+            <param id="docker_sudo">false</param>
+            <param id="docker_net">bridge</param>
+            <param id="docker_default_container_id">galaxy</param>
+        </destination>
+        <!-- destination id="dest_synapse" runner="local">
+            <param id="docker_enabled">false</param>
+        </destination -->
+    </destinations>
+    <!-- tools>
+        <tool id="synapse_download" destination="dest_synapse"/>
+    </tools -->
+</job_conf>
 """
 
 
