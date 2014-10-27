@@ -220,7 +220,10 @@ def run_status(args):
     for line in lines[1:]:
         if len(line):
             name = line[namesIndex:sizeIndex].split()[0]
-            status = line[statusIndex:portsIndex].split()[0]
+            tmp = line[statusIndex:portsIndex].split()
+            status = "NotFound"
+            if len(tmp):
+                status = tmp[0]
             if name == args.name:
                 print status
                 found = True
