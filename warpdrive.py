@@ -10,6 +10,7 @@ import subprocess
 import logging
 import requests
 import tempfile
+import string
 
 def which(file):
     for path in os.environ["PATH"].split(":"):
@@ -160,8 +161,9 @@ def run_up(args):
             config_dir = os.path.abspath(tempfile.mkdtemp(dir=args.work_dir, prefix="galaxy_warpconfig_"))
             mounts[config_dir] = "/config"
         with open( os.path.join(config_dir, "job_conf.xml"), "w" ) as handle:
-            handle.write(JOB_CHILD_CONF)
+            handle.write(string.Template(JOB_CHILD_CONF).substitute(TAG=args.tag))
         env["GALAXY_CONFIG_JOB_CONFIG_FILE"] = "/config/job_conf.xml" 
+        env['GALAXY_CONFIG_OUTPUTS_TO_WORKING_DIRECTORY'] = "True"
         privledged=True
 
     call_docker_run(
@@ -255,15 +257,9 @@ JOB_CHILD_CONF = """<?xml version="1.0"?>
             <param id="docker_enabled">true</param>
             <param id="docker_sudo">false</param>
             <param id="docker_net">bridge</param>
-            <param id="docker_default_container_id">galaxy</param>
+            <param id="docker_default_container_id">${TAG}</param>
         </destination>
-        <!-- destination id="dest_synapse" runner="local">
-            <param id="docker_enabled">false</param>
-        </destination -->
     </destinations>
-    <!-- tools>
-        <tool id="synapse_download" destination="dest_synapse"/>
-    </tools -->
 </job_conf>
 """
 
