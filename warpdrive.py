@@ -161,7 +161,7 @@ def run_up(args):
             config_dir = os.path.abspath(tempfile.mkdtemp(dir=args.work_dir, prefix="galaxy_warpconfig_"))
             mounts[config_dir] = "/config"
         with open( os.path.join(config_dir, "job_conf.xml"), "w" ) as handle:
-            handle.write(string.Template(JOB_CHILD_CONF).substitute(TAG=args.tag))
+            handle.write(string.Template(JOB_CHILD_CONF).substitute(TAG=args.tag, NAME=args.name))
         env["GALAXY_CONFIG_JOB_CONFIG_FILE"] = "/config/job_conf.xml" 
         env['GALAXY_CONFIG_OUTPUTS_TO_WORKING_DIRECTORY'] = "True"
         privledged=True
@@ -258,6 +258,8 @@ JOB_CHILD_CONF = """<?xml version="1.0"?>
             <param id="docker_sudo">false</param>
             <param id="docker_net">bridge</param>
             <param id="docker_default_container_id">${TAG}</param>
+            <param id="docker_volumes"></param>
+            <param id="docker_volumes_from">${NAME}</param>
         </destination>
     </destinations>
 </job_conf>
