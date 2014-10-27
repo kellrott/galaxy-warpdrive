@@ -9,6 +9,7 @@ import argparse
 import subprocess
 import logging
 import requests
+import tempfile
 
 def which(file):
     for path in os.environ["PATH"].split(":"):
@@ -27,6 +28,7 @@ def call_docker_run(
     args=[], host=None,
     env={},
     set_user=False,
+    mounts={},
     name=None):
 
     docker_path = get_docker_path()
@@ -43,6 +45,8 @@ def call_docker_run(
         cmd.extend( ["-e", "%s=%s" % (k,v)] )
     if name is not None:
         cmd.extend( ["--name", name])
+    for k, v in mounts.items():
+        cmd.extend( ["-v", "%s:%s" % (k, v)])
     cmd.append("-d")
     cmd.extend( [docker_tag] )
     cmd.extend(args)
@@ -130,14 +134,27 @@ def run_up(args):
         "GALAXY_CONFIG_MASTER_API_KEY" : args.key
     }
 
+    mounts = {}
+
     if args.tool_data is not None:
-        env['GALAXY_CONFIG_TOOL_DATA_PATH'] = args.tool_data
+        mounts[os.path.abspath(args.tool_data)] = "/tool_data"
+        env['GALAXY_CONFIG_TOOL_DATA_PATH'] = "/tool_data"
+
+    if args.tool_dir is not None:
+        mounts[os.path.abspath(args.tool_dir)] = "/tools_import"
+        config_dir = os.path.abspath(tempfile.mkdtemp(dir=args.work_dir, prefix="galaxy_warpconfig_"))
+        mounts[config_dir] = "/config"
+        with open( os.path.join(config_dir, "import_tool_conf.xml"), "w" ) as handle:
+            handle.write(TOOL_IMPORT_CONF)
+        env['GALAXY_CONFIG_TOOL_CONFIG_FILE'] = "config/tool_conf.xml,/config/import_tool_conf.xml"
+
 
     call_docker_run(
         args.tag,
         ports={args.port : "80"},
         host=args.host,
         name=args.name,
+        mounts=mounts,
         env=env
     )
 
@@ -193,6 +210,16 @@ def run_status(args):
                 found = True
     if not found:
         print "NotFound"
+
+
+TOOL_IMPORT_CONF = """<?xml version='1.0' encoding='utf-8'?>
+<toolbox>
+  <section id="imported" name="Imported Tools">
+    <tool_dir dir="/tools_import"/>
+  </section>
+</toolbox>
+"""
+
 
 
 if __name__ == "__main__":
