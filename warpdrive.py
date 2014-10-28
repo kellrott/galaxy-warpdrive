@@ -154,7 +154,7 @@ def run_up(args):
         mounts[config_dir] = "/config"
         with open( os.path.join(config_dir, "import_tool_conf.xml"), "w" ) as handle:
             handle.write(TOOL_IMPORT_CONF)
-        env['GALAXY_CONFIG_TOOL_CONFIG_FILE'] = "config/tool_conf.xml.main,/config/import_tool_conf.xml"
+        env['GALAXY_CONFIG_TOOL_CONFIG_FILE'] = "/config/import_tool_conf.xml,config/tool_conf.xml"
 
     if args.child:
         if config_dir is None:
