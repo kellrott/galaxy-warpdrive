@@ -11,6 +11,9 @@ import logging
 import requests
 import tempfile
 import string
+import json
+
+from glob import glob
 
 def which(file):
     for path in os.environ["PATH"].split(":"):
@@ -155,6 +158,15 @@ def run_up(args):
         with open( os.path.join(config_dir, "import_tool_conf.xml"), "w" ) as handle:
             handle.write(TOOL_IMPORT_CONF)
         env['GALAXY_CONFIG_TOOL_CONFIG_FILE'] = "/config/import_tool_conf.xml,config/tool_conf.xml.main"
+    
+    data_load = []
+    if args.lib_data is not None:
+        env['GALAXY_CONFIG_ALLOW_LIBRARY_PATH_PASTE'] = "True"
+        lpath = os.path.abspath(args.lib_data)
+        mounts[lpath] = "/export/lib_data"
+        for a in glob(os.path.join(lpath, "*")):
+            if os.path.isfile(a):
+                data_load.append( os.path.join("/export/lib_data", os.path.relpath(a, lpath) ) )
 
     if args.child:
         if config_dir is None:
@@ -184,12 +196,84 @@ def run_up(args):
     while True:
         time.sleep(3)
         try:
-            requests.get("http://%s:%s/api/tools?key=%s" % (host, args.port, args.key), timeout=3)
-            return 0
+            url = "http://%s:%s/api/tools?key=%s" % (host, args.port, args.key)
+            logging.debug("Pinging: %s" % (url))
+            res = requests.get(url, timeout=3)
+            if res.status_code / 100 == 5:
+                continue
+            break
         except requests.exceptions.ConnectionError:
             pass
         except requests.exceptions.Timeout:
             pass
+    
+    rg = RemoteGalaxy("http://%s:%s"  % (host, args.port), 'admin')
+    library_id = rg.create_library("Imported")
+    folder_id = rg.library_find(library_id, "/")['id']
+    for data in data_load:
+        logging.info("Loading: %s" % (data))
+        print rg.library_paste_file(library_id, folder_id, os.path.basename(data), data)
+
+class RemoteGalaxy(object):
+    
+    def __init__(self, url, api_key):
+        self.url = url
+        self.api_key = api_key
+
+    def get(self, path):
+        c_url = self.url + path
+        params = {}
+        params['key'] = self.api_key
+        req = requests.get(c_url, params=params)
+        return req.json()
+
+    def post(self, path, payload):
+        c_url = self.url + path
+        params = {}
+        params['key'] = self.api_key
+        logging.debug("POSTING: %s %s" % (c_url, json.dumps(payload)))
+        req = requests.post(c_url, data=json.dumps(payload), params=params, headers = {'Content-Type': 'application/json'} )
+        return req.json()
+
+    def post_text(self, path, payload, params=None):
+        c_url = self.url + path
+        if params is None:
+            params = {}
+        params['key'] = self.api_key
+        logging.debug("POSTING: %s %s" % (c_url, json.dumps(payload)))
+        req = requests.post(c_url, data=json.dumps(payload), params=params, headers = {'Content-Type': 'application/json'} )
+        return req.text
+
+    def create_library(self, name):
+        lib_create_data = {'name' : name}
+        library = self.post('/api/libraries', lib_create_data)
+        library_id = library['id']
+        return library_id
+    
+    def library_list(self, library_id):
+        return self.get("/api/libraries/%s/contents" % library_id)
+    
+    def library_find(self, library_id, name):
+        for a in self.library_list(library_id):
+            if a['name'] == name:
+                return a
+        return None
+
+    def library_paste_file(self, library_id, library_folder_id, name, datapath, metadata=None):
+        data = {}
+        data['folder_id'] = library_folder_id
+        data['file_type'] = 'auto'
+        data['name'] = name
+        data['dbkey'] = ''
+        data['upload_option'] = 'upload_paths'
+        data['create_type'] = 'file'
+        data['link_data_only'] = 'link_to_files'
+        if metadata is not None:
+            data['extended_metadata'] = metadata
+        data['filesystem_paths'] = datapath
+        libset = self.post("/api/libraries/%s/contents" % library_id, data)
+        return libset
+
 
 
 def run_down(args):
@@ -271,6 +355,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("-v", action="store_true", default=False)
+    parser.add_argument("-vv", action="store_true", default=False)
 
     subparsers = parser.add_subparsers(title="subcommand")
 
@@ -281,6 +366,7 @@ if __name__ == "__main__":
     parser_up.add_argument("-w", "--work-dir", default="/tmp")
     parser_up.add_argument("-p", "--port", default="8080")
     parser_up.add_argument("-n", "--name", default="galaxy")
+    parser_up.add_argument("-l", "--lib-data", default=None)
     parser_up.add_argument("-c", "--child", action="store_true", help="Launch jobs in child containers", default=False)
     parser_up.add_argument("--key", default="HSNiugRFvgT574F43jZ7N9F3")
     parser_up.add_argument("--host", default=None)
@@ -301,4 +387,7 @@ if __name__ == "__main__":
 
     if args.v:
         logging.basicConfig(level=logging.INFO)
+    if args.vv:
+        logging.basicConfig(level=logging.DEBUG)
+    
     sys.exit(args.func(args))
