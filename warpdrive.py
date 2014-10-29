@@ -134,7 +134,7 @@ def call_docker_ps(
 
 
 def run_up(name="galaxy", docker_tag="bgruening/galaxy-stable", port=8080, host=None,
-    lib_data=None, tool_data=None, tool_dir=None,
+    lib_data=None, tool_data=None, metadata_suffix=None, tool_dir=None,
     work_dir="/tmp", tool_docker=False,
     key="HSNiugRFvgT574F43jZ7N9F3"):
 
@@ -163,13 +163,26 @@ def run_up(name="galaxy", docker_tag="bgruening/galaxy-stable", port=8080, host=
         env['GALAXY_CONFIG_TOOL_CONFIG_FILE'] = "/config/import_tool_conf.xml,config/tool_conf.xml.main"
     
     data_load = []
+    meta_data = {}
     if lib_data is not None:
         env['GALAXY_CONFIG_ALLOW_LIBRARY_PATH_PASTE'] = "True"
         lpath = os.path.abspath(lib_data)
         mounts[lpath] = "/export/lib_data"
         for a in glob(os.path.join(lpath, "*")):
-            if os.path.isfile(a):
-                data_load.append( os.path.join("/export/lib_data", os.path.relpath(a, lpath) ) )
+            if metadata_suffix is None or not a.endswith(metadata_suffix):
+                if os.path.isfile(a):
+                    data_load.append( os.path.join("/export/lib_data", os.path.relpath(a, lpath) ) )
+            elif metadata_suffix is not None:
+                file = a[:-len(metadata_suffix)]
+                if os.path.exists(file):
+                    try:
+                        with open(a) as handle:
+                            txt = handle.read()
+                            md = json.loads(txt)
+                            meta_data[ os.path.join("/export/lib_data", os.path.relpath(file, lpath) ) ] = md
+                            print "metadata for", file
+                    except:
+                        pass
 
     if tool_docker:
         mounts[config_dir] = "/config"
@@ -213,7 +226,10 @@ def run_up(name="galaxy", docker_tag="bgruening/galaxy-stable", port=8080, host=
     folder_id = rg.library_find(library_id, "/")['id']
     for data in data_load:
         logging.info("Loading: %s" % (data))
-        print rg.library_paste_file(library_id, folder_id, os.path.basename(data), data)
+        md = {}
+        if data in meta_data:
+            md = meta_data[data]
+        print rg.library_paste_file(library_id, folder_id, os.path.basename(data), data, uuid=md.get('uuid', None))
 
 class RemoteGalaxy(object):
     
@@ -260,11 +276,13 @@ class RemoteGalaxy(object):
                 return a
         return None
 
-    def library_paste_file(self, library_id, library_folder_id, name, datapath, metadata=None):
+    def library_paste_file(self, library_id, library_folder_id, name, datapath, uuid=None, metadata=None):
         data = {}
         data['folder_id'] = library_folder_id
         data['file_type'] = 'auto'
         data['name'] = name
+        if uuid is not None:
+            data['uuid'] = uuid
         data['dbkey'] = ''
         data['upload_option'] = 'upload_paths'
         data['create_type'] = 'file'
@@ -371,6 +389,7 @@ if __name__ == "__main__":
     parser_up.add_argument("-d", "--tool-data", default=None)
     parser_up.add_argument("-w", "--work-dir", default="/tmp")
     parser_up.add_argument("-p", "--port", default="8080")
+    parser_up.add_argument("-m", "--metadata", dest="metadata_suffix", default=None)
     parser_up.add_argument("-n", "--name", default="galaxy")
     parser_up.add_argument("-l", "--lib-data", default=None)
     parser_up.add_argument("-c", "--child", dest="tool_docker", action="store_true", help="Launch jobs in child containers", default=False)
