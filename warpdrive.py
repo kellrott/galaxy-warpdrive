@@ -86,11 +86,8 @@ def call_docker_kill(
         sys_env['DOCKER_HOST'] = host
 
     logging.info("executing: " + " ".join(cmd))
-    proc = subprocess.Popen(cmd, close_fds=True, env=sys_env, stdout=subprocess.PIPE)
-    stdout, stderr = proc.communicate()
-    if proc.returncode != 0:
-        raise Exception("Call Failed: %s" % (cmd))
-
+    subprocess.check_call(cmd, close_fds=True, env=sys_env, stdout=subprocess.PIPE)
+    
 def call_docker_rm(
     name=None,
     host=None
@@ -136,53 +133,57 @@ def call_docker_ps(
     return stdout
 
 
-def run_up(args):
+def run_up(name="galaxy", docker_tag="bgruening/galaxy-stable", port=8080, host=None,
+    lib_data=None, tool_data=None, tool_dir=None,
+    work_dir="/tmp", tool_docker=False,
+    key="HSNiugRFvgT574F43jZ7N9F3"):
+
+
     env = {
         "GALAXY_CONFIG_CHECK_MIGRATE_TOOLS" : "False",
-        "GALAXY_CONFIG_MASTER_API_KEY" : args.key
+        "GALAXY_CONFIG_MASTER_API_KEY" : key
     }
 
     mounts = {}
     privledged = False
 
-    if args.tool_data is not None:
-        mounts[os.path.abspath(args.tool_data)] = "/tool_data"
+    if tool_data is not None:
+        mounts[os.path.abspath(tool_data)] = "/tool_data"
         env['GALAXY_CONFIG_TOOL_DATA_PATH'] = "/tool_data"
 
-    config_dir = None
+    config_dir = os.path.abspath(os.path.join(work_dir, "warpdrive_%s" % (name)))
+    if not os.path.exists(config_dir):
+        os.mkdir(config_dir)
 
-    if args.tool_dir is not None:
-        mounts[os.path.abspath(args.tool_dir)] = "/tools_import"
-        config_dir = os.path.abspath(tempfile.mkdtemp(dir=args.work_dir, prefix="galaxy_warpconfig_"))
+    if tool_dir is not None:
+        mounts[os.path.abspath(tool_dir)] = "/tools_import"
         mounts[config_dir] = "/config"
         with open( os.path.join(config_dir, "import_tool_conf.xml"), "w" ) as handle:
             handle.write(TOOL_IMPORT_CONF)
         env['GALAXY_CONFIG_TOOL_CONFIG_FILE'] = "/config/import_tool_conf.xml,config/tool_conf.xml.main"
     
     data_load = []
-    if args.lib_data is not None:
+    if lib_data is not None:
         env['GALAXY_CONFIG_ALLOW_LIBRARY_PATH_PASTE'] = "True"
-        lpath = os.path.abspath(args.lib_data)
+        lpath = os.path.abspath(lib_data)
         mounts[lpath] = "/export/lib_data"
         for a in glob(os.path.join(lpath, "*")):
             if os.path.isfile(a):
                 data_load.append( os.path.join("/export/lib_data", os.path.relpath(a, lpath) ) )
 
-    if args.child:
-        if config_dir is None:
-            config_dir = os.path.abspath(tempfile.mkdtemp(dir=args.work_dir, prefix="galaxy_warpconfig_"))
-            mounts[config_dir] = "/config"
+    if tool_docker:
+        mounts[config_dir] = "/config"
         with open( os.path.join(config_dir, "job_conf.xml"), "w" ) as handle:
-            handle.write(string.Template(JOB_CHILD_CONF).substitute(TAG=args.tag, NAME=args.name))
+            handle.write(string.Template(JOB_CHILD_CONF).substitute(TAG=docker_tag, NAME=name))
         env["GALAXY_CONFIG_JOB_CONFIG_FILE"] = "/config/job_conf.xml"
         env['GALAXY_CONFIG_OUTPUTS_TO_WORKING_DIRECTORY'] = "True"
         privledged=True
 
     call_docker_run(
-        args.tag,
-        ports={args.port : "80"},
-        host=args.host,
-        name=args.name,
+        docker_tag,
+        ports={str(port) : "80"},
+        host=host,
+        name=name,
         mounts=mounts,
         privledged=privledged,
         env=env
@@ -196,7 +197,7 @@ def run_up(args):
     while True:
         time.sleep(3)
         try:
-            url = "http://%s:%s/api/tools?key=%s" % (host, args.port, args.key)
+            url = "http://%s:%s/api/tools?key=%s" % (host, port, key)
             logging.debug("Pinging: %s" % (url))
             res = requests.get(url, timeout=3)
             if res.status_code / 100 == 5:
@@ -207,7 +208,7 @@ def run_up(args):
         except requests.exceptions.Timeout:
             pass
     
-    rg = RemoteGalaxy("http://%s:%s"  % (host, args.port), 'admin')
+    rg = RemoteGalaxy("http://%s:%s"  % (host, port), 'admin')
     library_id = rg.create_library("Imported")
     folder_id = rg.library_find(library_id, "/")['id']
     for data in data_load:
@@ -276,20 +277,25 @@ class RemoteGalaxy(object):
 
 
 
-def run_down(args):
-    call_docker_kill(
-        args.name, host=args.host
-    )
-
-    if args.rm:
+def run_down(name, host=None, rm=False, work_dir="/tmp"):
+    try:
+        call_docker_kill(
+            name, host=host
+            )
+    except subprocess.CalledProcessError:
+        return
+    if rm:
         call_docker_rm(
-            args.name, host=args.host
+            name, host=host
         )
+        config_dir = os.path.join(work_dir, "warpdrive_%s" % (name))
+        if os.path.exists(config_dir):
+            shutil.rmtree(config_dir)
 
 
-def run_status(args):
+def run_status(name="galaxy", host=None):
     txt = call_docker_ps(
-        host=args.host
+        host=host
     )
 
     lines = txt.split("\n")
@@ -305,12 +311,12 @@ def run_status(args):
     found = False
     for line in lines[1:]:
         if len(line):
-            name = line[namesIndex:sizeIndex].split()[0]
+            cur_name = line[namesIndex:sizeIndex].split()[0]
             tmp = line[statusIndex:portsIndex].split()
             status = "NotFound"
             if len(tmp):
                 status = tmp[0]
-            if name == args.name:
+            if cur_name == name:
                 print status
                 found = True
     if not found:
@@ -360,14 +366,14 @@ if __name__ == "__main__":
     subparsers = parser.add_subparsers(title="subcommand")
 
     parser_up = subparsers.add_parser('up')
-    parser_up.add_argument("-t", "--tag", default="bgruening/galaxy-stable")
+    parser_up.add_argument("-t", "--tag", dest="docker_tag", default="bgruening/galaxy-stable")
     parser_up.add_argument("-x", "--tool-dir", default=None)
     parser_up.add_argument("-d", "--tool-data", default=None)
     parser_up.add_argument("-w", "--work-dir", default="/tmp")
     parser_up.add_argument("-p", "--port", default="8080")
     parser_up.add_argument("-n", "--name", default="galaxy")
     parser_up.add_argument("-l", "--lib-data", default=None)
-    parser_up.add_argument("-c", "--child", action="store_true", help="Launch jobs in child containers", default=False)
+    parser_up.add_argument("-c", "--child", dest="tool_docker", action="store_true", help="Launch jobs in child containers", default=False)
     parser_up.add_argument("--key", default="HSNiugRFvgT574F43jZ7N9F3")
     parser_up.add_argument("--host", default=None)
     parser_up.set_defaults(func=run_up)
@@ -376,6 +382,7 @@ if __name__ == "__main__":
     parser_down.add_argument("-n", "--name", default="galaxy")
     parser_down.add_argument("--rm", action="store_true", default=False)
     parser_down.add_argument("--host", default=None)
+    parser_down.add_argument("-w", "--work-dir", default="/tmp")
     parser_down.set_defaults(func=run_down)
 
     parser_status = subparsers.add_parser('status')
@@ -390,4 +397,10 @@ if __name__ == "__main__":
     if args.vv:
         logging.basicConfig(level=logging.DEBUG)
     
-    sys.exit(args.func(args))
+    func = args.func
+    kwds=vars(args)
+    del kwds['v'] 
+    del kwds['vv']
+    del kwds['func']
+    
+    sys.exit(func(**kwds))
