@@ -310,6 +310,10 @@ class RemoteGalaxy(object):
 
 
 def run_down(name, host=None, rm=False, work_dir="/tmp"):
+    config_dir = os.path.join(work_dir, "warpdrive_%s" % (name))
+    if not os.path.exists(config_dir):
+        print "Config not found"
+        return
     try:
         call_docker_kill(
             name, host=host
@@ -320,9 +324,7 @@ def run_down(name, host=None, rm=False, work_dir="/tmp"):
         call_docker_rm(
             name, host=host
         )
-        config_dir = os.path.join(work_dir, "warpdrive_%s" % (name))
-        if os.path.exists(config_dir):
-            shutil.rmtree(config_dir)
+        shutil.rmtree(config_dir)
 
 
 def run_status(name="galaxy", host=None):
@@ -353,6 +355,15 @@ def run_status(name="galaxy", host=None):
                 found = True
     if not found:
         print "NotFound"
+
+def run_add(name="galaxy", workdir="/tmp", files=[]):
+    config_dir = os.path.join(work_dir, "warpdrive_%s" % (name))
+    if not os.path.exists(config_dir):
+        print "Config not found"
+        return
+
+    
+
 
 
 TOOL_IMPORT_CONF = """<?xml version='1.0' encoding='utf-8'?>
@@ -422,6 +433,12 @@ if __name__ == "__main__":
     parser_status.add_argument("-n", "--name", default="galaxy")
     parser_status.add_argument("--host", default=None)
     parser_status.set_defaults(func=run_status)
+
+    parser_add = subparsers.add_parser('add')
+    parser_add.add_argument("-n", "--name", default="galaxy")
+    parser_add.add_argument("-w", "--work-dir", default="/tmp")
+    parser_add.add_argument("files", nargs="+")
+    parser_add.set_defaults(func=run_add)
 
     args = parser.parse_args()
 
