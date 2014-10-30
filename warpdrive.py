@@ -16,6 +16,10 @@ import shutil
 
 from glob import glob
 
+class RequestException(Exception):
+    def __init__(self, message):
+        self.message = message
+
 def which(file):
     for path in os.environ["PATH"].split(":"):
         p = os.path.join(path, file)
@@ -135,7 +139,7 @@ def call_docker_ps(
 
 
 def run_up(name="galaxy", docker_tag="bgruening/galaxy-stable", port=8080, host=None,
-    lib_data=[], tool_data=None, metadata_suffix=None, tool_dir=None,
+    lib_data=[], auto_add=False, tool_data=None, metadata_suffix=None, tool_dir=None,
     work_dir="/tmp", tool_docker=False,
     key="HSNiugRFvgT574F43jZ7N9F3"):
 
@@ -164,26 +168,29 @@ def run_up(name="galaxy", docker_tag="bgruening/galaxy-stable", port=8080, host=
 
     data_load = []
     meta_data = {}
+    lib_mapping = {}
     for i, ld in enumerate(lib_data):
         env['GALAXY_CONFIG_ALLOW_LIBRARY_PATH_PASTE'] = "True"
         lpath = os.path.abspath(ld)
         dpath = "/export/lib_data_%s" % (i)
         mounts[lpath] = dpath
-        for a in glob(os.path.join(lpath, "*")):
-            if metadata_suffix is None or not a.endswith(metadata_suffix):
-                if os.path.isfile(a):
-                    data_load.append( os.path.join(dpath, os.path.relpath(a, lpath) ) )
-            elif metadata_suffix is not None:
-                file = a[:-len(metadata_suffix)]
-                if os.path.exists(file):
-                    try:
-                        with open(a) as handle:
-                            txt = handle.read()
-                            md = json.loads(txt)
-                            meta_data[ os.path.join(dpath, os.path.relpath(file, lpath) ) ] = md
-                            print "metadata for", file
-                    except:
-                        pass
+        lib_mapping[lpath] = dpath
+        if auto_add:
+            for a in glob(os.path.join(lpath, "*")):
+                if metadata_suffix is None or not a.endswith(metadata_suffix):
+                    if os.path.isfile(a):
+                        data_load.append( os.path.join(dpath, os.path.relpath(a, lpath) ) )
+                elif metadata_suffix is not None:
+                    file = a[:-len(metadata_suffix)]
+                    if os.path.exists(file):
+                        try:
+                            with open(a) as handle:
+                                txt = handle.read()
+                                md = json.loads(txt)
+                                meta_data[ os.path.join(dpath, os.path.relpath(file, lpath) ) ] = md
+                                logging.debug("Found metadata for %s " % (file))
+                        except:
+                            pass
 
     if tool_docker:
         mounts[config_dir] = "/config"
@@ -224,7 +231,7 @@ def run_up(name="galaxy", docker_tag="bgruening/galaxy-stable", port=8080, host=
 
     rg = RemoteGalaxy("http://%s:%s"  % (host, port), 'admin')
     library_id = rg.create_library("Imported")
-    folder_id = rg.library_find(library_id, "/")['id']
+    folder_id = rg.library_find_contents(library_id, "/")['id']
     for data in data_load:
         logging.info("Loading: %s" % (data))
         md = {}
@@ -236,13 +243,14 @@ def run_up(name="galaxy", docker_tag="bgruening/galaxy-stable", port=8080, host=
         handle.write(json.dumps({
             'docker_tag' : docker_tag,
             'port' : port,
-            'lib_data' : lib_data,
+            'lib_data' : list(os.path.abspath(a) for a in lib_data),
             'host' : host,
-            'tool_dir' : tool_dir,
-            'tool_data' : tool_data,
+            'tool_dir' : os.path.abspath(tool_dir) if tool_dir is not None else None,
+            'tool_data' : os.path.abspath(tool_data) if tool_dir is not None else None,
             'metadata_suffix' : metadata_suffix,
             'tool_docker' : tool_docker,
-            'key' : key
+            'key' : key,
+            'lib_mapping' : lib_mapping
         }))
 
 class RemoteGalaxy(object):
@@ -280,12 +288,21 @@ class RemoteGalaxy(object):
         library = self.post('/api/libraries', lib_create_data)
         library_id = library['id']
         return library_id
+    
+    def library_find(self, name):
+        for d in self.library_list():
+            if d['name'] == name:
+                return d
+        return None
 
-    def library_list(self, library_id):
+    def library_list(self):
+        return self.get("/api/libraries")
+
+    def library_list_contents(self, library_id):
         return self.get("/api/libraries/%s/contents" % library_id)
 
-    def library_find(self, library_id, name):
-        for a in self.library_list(library_id):
+    def library_find_contents(self, library_id, name):
+        for a in self.library_list_contents(library_id):
             if a['name'] == name:
                 return a
         return None
@@ -356,13 +373,42 @@ def run_status(name="galaxy", host=None):
     if not found:
         print "NotFound"
 
-def run_add(name="galaxy", workdir="/tmp", files=[]):
+
+def run_add(name="galaxy", work_dir="/tmp", files=[]):
     config_dir = os.path.join(work_dir, "warpdrive_%s" % (name))
     if not os.path.exists(config_dir):
         print "Config not found"
         return
-
     
+    with open(os.path.join(config_dir, "config.json")) as handle:
+        txt = handle.read()
+        config = json.loads(txt)
+
+    data_load = []
+    for f in files:
+        fpath = os.path.abspath(f)
+        if os.path.isfile(fpath):
+            mapping = None
+            for ppath, dpath in config['lib_mapping'].items():
+                if mapping is None and fpath.startswith(ppath):
+                    mapping = os.path.join(dpath, os.path.relpath(fpath, ppath))
+            if mapping is None:
+                raise RequestException("File %s not in mounted lib directories" % (fpath))
+            data_load.append(mapping)
+
+    rg = RemoteGalaxy("http://%s:%s" % (config['host'], config['port']), 'admin')
+    library_id = rg.library_find("Imported")['id']
+    folder_id = rg.library_find_contents(library_id, "/")['id']
+    
+    for d in data_load:
+        md = {}
+        if config['metadata_suffix'] is not None:
+            if os.path.exists(d + config['metadata_suffix']):
+                with open(d+config['metadata_suffix']) as handle:
+                    txt = handle.read()
+                    md = json.loads(txt)
+        logging.info("Adding %s" % (d))
+        rg.library_paste_file(library_id, folder_id, os.path.basename(name), d, uuid=md.get('uuid', None))
 
 
 
@@ -417,6 +463,7 @@ if __name__ == "__main__":
     parser_up.add_argument("-m", "--metadata", dest="metadata_suffix", default=None)
     parser_up.add_argument("-n", "--name", default="galaxy")
     parser_up.add_argument("-l", "--lib-data", action="append", default=[])
+    parser_up.add_argument("-a", "--auto-add", action="store_true", default=False)
     parser_up.add_argument("-c", "--child", dest="tool_docker", action="store_true", help="Launch jobs in child containers", default=False)
     parser_up.add_argument("--key", default="HSNiugRFvgT574F43jZ7N9F3")
     parser_up.add_argument("--host", default=None)
@@ -453,4 +500,8 @@ if __name__ == "__main__":
     del kwds['vv']
     del kwds['func']
 
-    sys.exit(func(**kwds))
+    try:
+        sys.exit(func(**kwds))
+    except RequestException, e:
+        sys.stderr.write("%s\n" % (e.message))
+        
