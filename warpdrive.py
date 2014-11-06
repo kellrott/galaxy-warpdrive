@@ -246,7 +246,7 @@ def run_up(name="galaxy", docker_tag="bgruening/galaxy-stable", port=8080, host=
             'lib_data' : list(os.path.abspath(a) for a in lib_data),
             'host' : host,
             'tool_dir' : os.path.abspath(tool_dir) if tool_dir is not None else None,
-            'tool_data' : os.path.abspath(tool_data) if tool_dir is not None else None,
+            'tool_data' : os.path.abspath(tool_data) if tool_data is not None else None,
             'metadata_suffix' : metadata_suffix,
             'tool_docker' : tool_docker,
             'key' : key,
@@ -290,7 +290,7 @@ class RemoteGalaxy(object):
         library = self.post('/api/libraries', lib_create_data)
         library_id = library['id']
         return library_id
-    
+
     def library_find(self, name):
         for d in self.library_list():
             if d['name'] == name:
@@ -308,16 +308,50 @@ class RemoteGalaxy(object):
             if a['name'] == name:
                 return a
         return None
-    
+
+    def library_get_contents(self, library_id, ldda_id):
+        return self.get("/api/libraries/%s/contents/%s" % (library_id, ldda_id))
+
     def add_workflow(self, wf):
         self.post("/api/workflows/upload", { 'workflow' : wf } )
 
+    def get_workflow(self, wid):
+        return self.get("/api/workflows/%s" % (wid))
+
+    def call_workflow(self, workflow_id, inputs, params):
+        wf_desc = self.get_workflow(workflow_id)
+        print json.dumps(wf_desc, indent=4)
+        dsmap = {}
+        for step_id, step_desc in wf_desc['steps'].iteritems():
+            if step_desc['type'] == 'data_input':
+                if step_id in inputs:
+                    dsmap[step_id] = inputs[step_id]
+                elif str(step_id) in inputs:
+                    dsmap[step_id] = inputs[str(step_id)]
+                elif step_desc["tool_inputs"]["name"] in inputs:
+                    dsmap[step_id] = inputs[step_desc["tool_inputs"]["name"]]
+
+        data = {
+            'workflow_id' : workflow_id,
+            'ds_map' : dsmap
+        }
+        return self.post("/api/workflows", data )
+        #return self.post("/api/workflows/%s/usage" % (workflow_id), data )
+
+    #def get_workflow_invocation( self, workflow_id, invc_id ):
+    #    return self.get("/api/workflows/%s/usage/%s" % (workflow_id, invc_id))
+
+
     def library_paste_file(self, library_id, library_folder_id, name, datapath, uuid=None, metadata=None):
         datapath = os.path.abspath(datapath)
+        found = False
         for ppath, dpath in self.path_mapping.items():
             if datapath.startswith(ppath):
                 datapath = os.path.join(dpath, os.path.relpath(datapath, ppath))
+                found = True
                 break
+        if not found:
+            raise Exception("Path not in mounted lib_data directories: %s" % (datapath))
         data = {}
         data['folder_id'] = library_folder_id
         data['file_type'] = 'auto'
@@ -332,7 +366,8 @@ class RemoteGalaxy(object):
             data['extended_metadata'] = metadata
         data['filesystem_paths'] = datapath
         libset = self.post("/api/libraries/%s/contents" % library_id, data)
-        return libset
+        print libset
+        return libset[0]
 
 
 
@@ -389,7 +424,7 @@ def run_add(name="galaxy", work_dir="/tmp", files=[]):
     if not os.path.exists(config_dir):
         print "Config not found"
         return
-    
+
     with open(os.path.join(config_dir, "config.json")) as handle:
         txt = handle.read()
         config = json.loads(txt)
@@ -409,7 +444,7 @@ def run_add(name="galaxy", work_dir="/tmp", files=[]):
     rg = RemoteGalaxy("http://%s:%s" % (config['host'], config['port']), 'admin')
     library_id = rg.library_find("Imported")['id']
     folder_id = rg.library_find_contents(library_id, "/")['id']
-    
+
     for d in data_load:
         md = {}
         if config['metadata_suffix'] is not None:
