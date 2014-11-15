@@ -484,8 +484,8 @@ JOB_CHILD_CONF = """<?xml version="1.0"?>
         <handler id="handler0" tags="handlers"/>
         <handler id="handler1" tags="handlers"/>
     </handlers>
-    <destinations default="cluster">
-        <destination id="cluster" runner="slurm">
+    <destinations default="cluster_docker">
+        <destination id="cluster_docker" runner="slurm">
             <param id="docker_enabled">true</param>
             <param id="docker_sudo">false</param>
             <param id="docker_net">bridge</param>
@@ -493,7 +493,12 @@ JOB_CHILD_CONF = """<?xml version="1.0"?>
             <param id="docker_volumes"></param>
             <param id="docker_volumes_from">${NAME}</param>
         </destination>
+        <destination id="cluster" runner="slurm">
+        </destination>
     </destinations>
+    <tools>
+        <tool id="upload1" handler="handlers" destination="cluster"></tool>
+    </tools>
 </job_conf>
 """
 
