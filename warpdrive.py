@@ -219,7 +219,7 @@ def call_docker_save(
 
 def run_up(name="galaxy", docker_tag="bgruening/galaxy-stable", port=8080, host=None,
     sudo=False, lib_data=[], auto_add=False, tool_data=None, file_store=None, metadata_suffix=None,
-    tool_dir=None, work_dir="/tmp", tool_docker=False, force=False,
+    tool_dir=None, work_dir="/tmp", tool_docker=False, force=False, tool_images=None,
     key="HSNiugRFvgT574F43jZ7N9F3"):
 
     if force and run_status(name=name,host=host, sudo=sudo):
@@ -247,6 +247,10 @@ def run_up(name="galaxy", docker_tag="bgruening/galaxy-stable", port=8080, host=
         with open( os.path.join(config_dir, "import_tool_conf.xml"), "w" ) as handle:
             handle.write(TOOL_IMPORT_CONF)
         env['GALAXY_CONFIG_TOOL_CONFIG_FILE'] = "/config/import_tool_conf.xml,config/tool_conf.xml.main"
+    
+    if tool_images is not None:
+        mounts[os.path.abspath(tool_images)] = "/images"
+        
 
     data_load = []
     meta_data = {}
@@ -638,11 +642,12 @@ def run_build(tool_dir, host=None, sudo=False, tool=None, no_cache=False, image_
                             if image_dir is not None:
                                 if not os.path.exists(image_dir):
                                     os.mkdir(image_dir)
+                                image_file = os.path.join(image_dir, "docker_" + tag.split(":")[0] + ".tar")
                                 call_docker_save(
                                     host=host,
                                     sudo=sudo,
                                     tag=tag,
-                                    output=os.path.join(image_dir, tag.split(":")[0] + ".docker")
+                                    output=image_file
                                 )
 
 
@@ -674,6 +679,7 @@ JOB_CHILD_CONF = """<?xml version="1.0"?>
             <param id="docker_default_container_id">${TAG}</param>
             <param id="docker_volumes">${COMMON_VOLUMES}</param>
             <param id="docker_volumes_from">${NAME}</param>
+            <param id="docker_container_image_cache_path">/images</param>
         </destination>
         <destination id="cluster" runner="slurm">
         </destination>
@@ -696,6 +702,7 @@ if __name__ == "__main__":
     parser_up = subparsers.add_parser('up')
     parser_up.add_argument("-t", "--tag", dest="docker_tag", default="bgruening/galaxy-stable:dev")
     parser_up.add_argument("-x", "--tool-dir", default=None)
+    parser_up.add_argument("-ti", "--tool-images", default=None)
     parser_up.add_argument("-f", "--force", action="store_true", default=False)
     parser_up.add_argument("-d", "--tool-data", default=None)
     parser_up.add_argument("-s", "--file-store", default=None)
