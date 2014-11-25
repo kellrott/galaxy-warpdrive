@@ -60,7 +60,7 @@ def call_docker_run(
         cmd.extend( ["-v", "%s:%s" % (k, v)])
     if privledged:
         cmd.append("--privileged")
-        cmd.extend( ['-v', '/var/run/docker.sock:/var/run/docker.sock'] )
+        #cmd.extend( ['-v', '/var/run/docker.sock:/var/run/docker.sock'] )
     cmd.append("-d")
     cmd.extend( [docker_tag] )
     cmd.extend(args)
@@ -191,14 +191,39 @@ def call_docker_build(
     if proc.returncode != 0:
         raise Exception("Call Failed: %s" % (cmd))
 
+def call_docker_save(
+    tag,
+    output,
+    host=None,
+    sudo=False,
+    ):
+    
+    
+    docker_path = get_docker_path()
+
+    cmd = [
+        docker_path, "save", "-o", output, tag
+    ]
+    sys_env = dict(os.environ)
+    if host is not None:
+        sys_env['DOCKER_HOST'] = host
+    if sudo:
+        cmd = ['sudo'] + cmd
+    logging.info("executing: " + " ".join(cmd))
+    proc = subprocess.Popen(cmd, close_fds=True, env=sys_env)
+    stdout, stderr = proc.communicate()
+    if proc.returncode != 0:
+        raise Exception("Call Failed: %s" % (cmd))
+        
+
 
 def run_up(name="galaxy", docker_tag="bgruening/galaxy-stable", port=8080, host=None,
     sudo=False, lib_data=[], auto_add=False, tool_data=None, file_store=None, metadata_suffix=None,
     tool_dir=None, work_dir="/tmp", tool_docker=False, force=False,
     key="HSNiugRFvgT574F43jZ7N9F3"):
 
-    if force and run_status(name=name,host=host):
-        run_down(name=name, host=host, rm=True, work_dir=work_dir)
+    if force and run_status(name=name,host=host, sudo=sudo):
+        run_down(name=name, host=host, rm=True, work_dir=work_dir, sudo=sudo)
 
     env = {
         "GALAXY_CONFIG_CHECK_MIGRATE_TOOLS" : "False",
@@ -292,7 +317,7 @@ def run_up(name="galaxy", docker_tag="bgruening/galaxy-stable", port=8080, host=
             res = requests.get(url, timeout=3)
             if res.status_code / 100 == 5:
                 continue
-            if res.status_code == 404:
+            if res.status_code in [404, 403]:
                 continue
             break
         except requests.exceptions.ConnectionError:
@@ -591,7 +616,7 @@ def dom_scan_iter(node, stack, prefix):
             yield node, prefix, None, getText( node.childNodes )
 
 
-def run_build(tool_dir, host=None, sudo=False, tool=None, no_cache=False):
+def run_build(tool_dir, host=None, sudo=False, tool=None, no_cache=False, image_dir=None):
     for tool_conf in glob(os.path.join(tool_dir, "*", "*.xml")):
         dom = parseXML(tool_conf)
         s = dom_scan(dom.childNodes[0], "tool")
@@ -609,6 +634,16 @@ def run_build(tool_dir, host=None, sudo=False, tool=None, no_cache=False):
                                 tag=tag,
                                 dir=os.path.dirname(tool_conf)
                             )
+                            
+                            if image_dir is not None:
+                                if not os.path.exists(image_dir):
+                                    os.mkdir(image_dir)
+                                call_docker_save(
+                                    host=host,
+                                    sudo=sudo,
+                                    tag=tag,
+                                    output=os.path.join(image_dir, tag.split(":")[0] + ".docker")
+                                )
 
 
 
@@ -659,7 +694,7 @@ if __name__ == "__main__":
     subparsers = parser.add_subparsers(title="subcommand")
 
     parser_up = subparsers.add_parser('up')
-    parser_up.add_argument("-t", "--tag", dest="docker_tag", default="bgruening/galaxy-stable")
+    parser_up.add_argument("-t", "--tag", dest="docker_tag", default="bgruening/galaxy-stable:dev")
     parser_up.add_argument("-x", "--tool-dir", default=None)
     parser_up.add_argument("-f", "--force", action="store_true", default=False)
     parser_up.add_argument("-d", "--tool-data", default=None)
@@ -701,6 +736,8 @@ if __name__ == "__main__":
     parser_build.add_argument("--sudo", action="store_true", default=False)
     parser_build.add_argument("--no-cache", action="store_true", default=False)
     parser_build.add_argument("-t", "--tool", action="append", default=None)
+    parser_build.add_argument("-o", "--image-dir", default=None)
+    
 
     parser_build.add_argument("tool_dir")
     parser_build.set_defaults(func=run_build)
