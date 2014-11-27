@@ -60,7 +60,6 @@ def call_docker_run(
         cmd.extend( ["-v", "%s:%s" % (k, v)])
     if privledged:
         cmd.append("--privileged")
-        #cmd.extend( ['-v', '/var/run/docker.sock:/var/run/docker.sock'] )
     cmd.append("-d")
     cmd.extend( [docker_tag] )
     cmd.extend(args)
@@ -295,7 +294,10 @@ def run_up(name="galaxy", docker_tag="bgruening/galaxy-stable", port=8080, host=
             ))
         env["GALAXY_CONFIG_JOB_CONFIG_FILE"] = "/config/job_conf.xml"
         env['GALAXY_CONFIG_OUTPUTS_TO_WORKING_DIRECTORY'] = "True"
+        env['DOCKER_PARENT'] = "True"
         privledged=True
+        mounts['/var/run/docker.sock'] = '/var/run/docker.sock'
+
 
     call_docker_run(
         docker_tag,
@@ -674,7 +676,7 @@ JOB_CHILD_CONF = """<?xml version="1.0"?>
     <destinations default="cluster_docker">
         <destination id="cluster_docker" runner="slurm">
             <param id="docker_enabled">true</param>
-            <param id="docker_sudo">false</param>
+            <param id="docker_sudo">true</param>
             <param id="docker_net">bridge</param>
             <param id="docker_default_container_id">${TAG}</param>
             <param id="docker_volumes">${COMMON_VOLUMES}</param>
