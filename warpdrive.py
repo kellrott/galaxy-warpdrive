@@ -550,19 +550,7 @@ def run_add(name="galaxy", work_dir="/tmp", files=[]):
         txt = handle.read()
         config = json.loads(txt)
 
-    data_load = []
-    for f in files:
-        fpath = os.path.abspath(f)
-        if os.path.isfile(fpath):
-            mapping = None
-            for ppath, dpath in config['lib_mapping'].items():
-                if mapping is None and fpath.startswith(ppath):
-                    mapping = os.path.join(dpath, os.path.relpath(fpath, ppath))
-            if mapping is None:
-                raise RequestException("File %s not in mounted lib directories" % (fpath))
-            data_load.append(mapping)
-
-    rg = RemoteGalaxy("http://%s:%s" % (config['host'], config['port']), 'admin')
+    rg = RemoteGalaxy("http://%s:%s" % (config['host'], config['port']), 'admin', path_mapping=config['lib_mapping'])
     library_id = rg.library_find("Imported")['id']
     folder_id = rg.library_find_contents(library_id, "/")['id']
 
