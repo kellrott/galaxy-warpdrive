@@ -114,15 +114,18 @@ def call_docker_kill(
     subprocess.check_call(cmd, close_fds=True, env=sys_env, stdout=subprocess.PIPE)
 
 def call_docker_rm(
-    name=None,
+    name=None, volume_delete=False,
     host=None, sudo=False
     ):
 
     docker_path = get_docker_path()
 
     cmd = [
-        docker_path, "rm", name
+        docker_path, "rm"
     ]
+    if volume_delete:
+        cmd.append("-v")
+    cmd.append(name)
 
     sys_env = dict(os.environ)
     if host is not None:
@@ -493,20 +496,18 @@ class RemoteGalaxy(object):
 
 def run_down(name="galaxy", host=None, rm=False, work_dir="/tmp", sudo=False):
     config_dir = os.path.join(work_dir, "warpdrive_%s" % (name))
-    if not os.path.exists(config_dir):
-        print "Config not found"
-        return
     try:
         call_docker_kill(
             name, host=host, sudo=sudo
         )
     except subprocess.CalledProcessError:
-        return
+        pass
     if rm:
         call_docker_rm(
-            name, host=host, sudo=sudo
+            name, host=host, sudo=sudo, volume_delete=True
         )
-        shutil.rmtree(config_dir)
+        if not os.path.exists(config_dir):
+            shutil.rmtree(config_dir)
 
 
 def run_status(name="galaxy", host=None, sudo=False):
