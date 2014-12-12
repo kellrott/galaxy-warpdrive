@@ -221,7 +221,7 @@ def call_docker_save(
 
 def run_up(name="galaxy", docker_tag="bgruening/galaxy-stable", port=8080, host=None,
     sudo=False, lib_data=[], auto_add=False, tool_data=None, file_store=None, metadata_suffix=None,
-    tool_dir=None, work_dir="/tmp", tool_docker=False, force=False, tool_images=None,
+    tool_dir=None, work_dir="/tmp", tool_docker=False, force=False, tool_images=None, smp=[],
     key="HSNiugRFvgT574F43jZ7N9F3"):
 
     if force and run_status(name=name,host=host, sudo=sudo):
@@ -287,20 +287,42 @@ def run_up(name="galaxy", docker_tag="bgruening/galaxy-stable", port=8080, host=
         mounts[file_store] = dpath
 
     if tool_docker:
-        mounts[config_dir] = "/config"
-        with open( os.path.join(config_dir, "job_conf.xml"), "w" ) as handle:
-            common_volumes = ",".join( "%s:%s:ro" % (k,v) for k,v in lib_mapping.items() )
-            handle.write(string.Template(JOB_CHILD_CONF).substitute(
+        common_volumes = ",".join( "%s:%s:ro" % (k,v) for k,v in lib_mapping.items() )
+        
+        #for every different count of SMPs, create a different destination
+        smp_destinations = []
+        for count in set( a[1] for a in smp ):
+            smp_destinations.append( string.Template(SMP_DEST_CONF).substitute(
+                DEST_NAME="docker_cluster_smp%s" % (count), 
                 TAG=docker_tag,
                 NAME=name,
-                COMMON_VOLUMES=common_volumes
-            ))
+                NCPUS=count,
+                COMMON_VOLUMES=common_volumes)
+            )
+            
+        smp_tools = []
+        for tool, conf in smp:
+            smp_tools.append( string.Template(SMP_TOOL_CONF).substitute(
+                    DEST_NAME="docker_cluster_smp%s" % (count),
+                    TOOL_ID=tool
+                )
+            )
+            
+        mounts[config_dir] = "/config"
+        job_conf = string.Template(JOB_CHILD_CONF).substitute(
+            TAG=docker_tag,
+            NAME=name,
+            COMMON_VOLUMES=common_volumes,
+            SMP_DESTINATIONS="\n".join(smp_destinations),
+            SMP_TOOLS="\n".join(smp_tools)
+        )
+        with open( os.path.join(config_dir, "job_conf.xml"), "w" ) as handle:
+            handle.write(job_conf)
         env["GALAXY_CONFIG_JOB_CONFIG_FILE"] = "/config/job_conf.xml"
         env['GALAXY_CONFIG_OUTPUTS_TO_WORKING_DIRECTORY'] = "True"
         env['DOCKER_PARENT'] = "True"
         privledged=True
         mounts['/var/run/docker.sock'] = '/var/run/docker.sock'
-
 
     call_docker_run(
         docker_tag,
@@ -648,8 +670,21 @@ TOOL_IMPORT_CONF = """<?xml version='1.0' encoding='utf-8'?>
   <section id="imported" name="Imported Tools">
     <tool_dir dir="/tools_import"/>
   </section>
-</toolbox>
-"""
+</toolbox>"""
+
+
+SMP_DEST_CONF = """<destination id="${DEST_NAME}" runner="slurm">
+            <param id="docker_enabled">true</param>
+            <param id="docker_sudo">true</param>
+            <param id="docker_net">bridge</param>
+            <param id="docker_default_container_id">${TAG}</param>
+            <param id="docker_volumes">${COMMON_VOLUMES}</param>
+            <param id="docker_volumes_from">${NAME}</param>
+            <param id="docker_container_image_cache_path">/images</param>
+            <param id="nativeSpecification">--ntasks=${NCPUS}</param>
+        </destination>"""
+
+SMP_TOOL_CONF = """<tool id="${TOOL_ID}" handler="handlers" destination="${DEST_NAME}"></tool>"""
 
 JOB_CHILD_CONF = """<?xml version="1.0"?>
 <job_conf>
@@ -672,11 +707,13 @@ JOB_CHILD_CONF = """<?xml version="1.0"?>
             <param id="docker_volumes_from">${NAME}</param>
             <param id="docker_container_image_cache_path">/images</param>
         </destination>
+        ${SMP_DESTINATIONS}
         <destination id="cluster" runner="slurm">
         </destination>
     </destinations>
     <tools>
         <tool id="upload1" handler="handlers" destination="cluster"></tool>
+        ${SMP_TOOLS}
     </tools>
 </job_conf>
 """
@@ -707,6 +744,7 @@ if __name__ == "__main__":
     parser_up.add_argument("--key", default="HSNiugRFvgT574F43jZ7N9F3")
     parser_up.add_argument("--host", default=None)
     parser_up.add_argument("--sudo", action="store_true", default=False)
+    parser_up.add_argument("--smp", action="append", nargs=2, default=[])
     parser_up.set_defaults(func=run_up)
 
     parser_down = subparsers.add_parser('down')
