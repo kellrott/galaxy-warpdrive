@@ -319,7 +319,7 @@ def run_up(name="galaxy", docker_tag="bgruening/galaxy-stable", port=8080, host=
         with open( os.path.join(config_dir, "job_conf.xml"), "w" ) as handle:
             handle.write(job_conf)
         env["GALAXY_CONFIG_JOB_CONFIG_FILE"] = "/config/job_conf.xml"
-        env['GALAXY_CONFIG_OUTPUTS_TO_WORKING_DIRECTORY'] = "True"
+        #env['GALAXY_CONFIG_OUTPUTS_TO_WORKING_DIRECTORY'] = "True"
         env['DOCKER_PARENT'] = "True"
         privledged=True
         mounts['/var/run/docker.sock'] = '/var/run/docker.sock'
