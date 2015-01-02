@@ -392,9 +392,8 @@ class RemoteGalaxy(object):
         self.api_key = api_key
         self.path_mapping = path_mapping
 
-    def get(self, path):
+    def get(self, path, params = {}):
         c_url = self.url + path
-        params = {}
         params['key'] = self.api_key
         req = requests.get(c_url, params=params)
         return req.json()
@@ -461,7 +460,7 @@ class RemoteGalaxy(object):
         return self.get("/api/histories/%s/contents/%s" % (history, hda))
 
     def get_provenance(self, history, hda):
-        return self.get("/api/histories/%s/contents/%s/provenance" % (history, hda))
+        return self.get("/api/histories/%s/contents/%s/provenance" % (history, hda)) #, {"follow" : True})
 
     def add_workflow(self, wf):
         self.post("/api/workflows/upload", { 'workflow' : wf } )
@@ -471,7 +470,7 @@ class RemoteGalaxy(object):
 
     def call_workflow(self, workflow_id, inputs, params):
         wf_desc = self.get_workflow(workflow_id)
-        print json.dumps(wf_desc, indent=4)
+        #print json.dumps(wf_desc, indent=4)
         dsmap = {}
         for step_id, step_desc in wf_desc['steps'].iteritems():
             if step_desc['type'] == 'data_input':
@@ -482,15 +481,20 @@ class RemoteGalaxy(object):
                 elif step_desc["tool_inputs"]["name"] in inputs:
                     dsmap[step_id] = inputs[step_desc["tool_inputs"]["name"]]
 
+        parameters = {}
+        for step_id, step_desc in wf_desc['steps'].iteritems():
+            if step_desc['type'] == 'tool':
+                if step_id in params:
+                    parameters[step_id] = params[step_id]
+                elif step_desc['annotation'] in params:
+                    parameters[step_id] = params[step_desc['annotation']]
+
         data = {
             'workflow_id' : workflow_id,
-            'ds_map' : dsmap
+            'ds_map' : dsmap,
+            'parameters' : parameters
         }
         return self.post("/api/workflows", data )
-        #return self.post("/api/workflows/%s/usage" % (workflow_id), data )
-
-    #def get_workflow_invocation( self, workflow_id, invc_id ):
-    #    return self.get("/api/workflows/%s/usage/%s" % (workflow_id, invc_id))
 
 
     def library_paste_file(self, library_id, library_folder_id, name, datapath, uuid=None, metadata=None):
