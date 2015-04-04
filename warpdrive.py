@@ -14,6 +14,11 @@ import string
 import json
 import shutil
 
+try:
+    import yaml
+except ImportError:
+    yaml = None
+
 from xml.dom.minidom import parse as parseXML
 from glob import glob
 
@@ -416,18 +421,30 @@ class RemoteGalaxy(object):
         req = requests.post(c_url, data=json.dumps(payload), params=params, headers = {'Content-Type': 'application/json'} )
         return req.text
 
-    def download(self, path, dst):
+    def download_handle(self, path):
         url = self.url + path
         logging.info("Downloading: %s" % (url))
         params = {}
         params['key'] = self.api_key
         r = requests.get(url, params=params, stream=True)
-        with open(dst, "wb") as handle:
+        return r
+
+    def download(self, path, dst):
+        r = self.download_handle(path)
+        dsize = 0L
+        if hasattr(dst, 'write'):
             for chunk in r.iter_content(chunk_size=1024):
                 if chunk:
-                    handle.write(chunk)
-                    handle.flush()
-
+                    dst.write(chunk)
+                    dsize += len(chunk)
+        else:
+            with open(dst, "wb") as handle:
+                for chunk in r.iter_content(chunk_size=1024):
+                    if chunk:
+                        handle.write(chunk)
+                        handle.flush()
+                        dsize += len(chunk)
+        logging.info("Downloaded: %s bytes" % (dsize))
 
     def create_library(self, name):
         lib_create_data = {'name' : name}
@@ -459,6 +476,16 @@ class RemoteGalaxy(object):
     def get_hda(self, history, hda):
         return self.get("/api/histories/%s/contents/%s" % (history, hda))
 
+    def download_hda(self, history, hda, dst):
+        meta = self.get_hda(history, hda)
+        self.download(meta['download_url'], dst)
+
+    def history_list(self):
+        return self.get("/api/histories")
+
+    def get_history(self, history):
+        return self.get("/api/histories/%s" % (history))
+
     def get_provenance(self, history, hda):
         return self.get("/api/histories/%s/contents/%s/provenance" % (history, hda)) #, {"follow" : True})
 
@@ -468,34 +495,11 @@ class RemoteGalaxy(object):
     def get_workflow(self, wid):
         return self.get("/api/workflows/%s" % (wid))
 
-    def call_workflow(self, workflow_id, inputs, params):
-        wf_desc = self.get_workflow(workflow_id)
-        #print json.dumps(wf_desc, indent=4)
-        dsmap = {}
-        for step_id, step_desc in wf_desc['steps'].iteritems():
-            if step_desc['type'] == 'data_input':
-                if step_id in inputs:
-                    dsmap[step_id] = inputs[step_id]
-                elif str(step_id) in inputs:
-                    dsmap[step_id] = inputs[str(step_id)]
-                elif step_desc["tool_inputs"]["name"] in inputs:
-                    dsmap[step_id] = inputs[step_desc["tool_inputs"]["name"]]
+    def call_workflow(self, request):
+        return self.post("/api/workflows", request )
 
-        parameters = {}
-        for step_id, step_desc in wf_desc['steps'].iteritems():
-            if step_desc['type'] == 'tool':
-                if step_id in params:
-                    parameters[step_id] = params[step_id]
-                elif step_desc['annotation'] in params:
-                    parameters[step_id] = params[step_desc['annotation']]
-
-        data = {
-            'workflow_id' : workflow_id,
-            'ds_map' : dsmap,
-            'parameters' : parameters
-        }
-        return self.post("/api/workflows", data )
-
+    def get_job(self, jid):
+        return self.get("/api/jobs/%s" % (jid), {'full' : True} )
 
     def library_paste_file(self, library_id, library_folder_id, name, datapath, uuid=None, metadata=None):
         datapath = os.path.abspath(datapath)
@@ -755,6 +759,8 @@ if __name__ == "__main__":
     parser_up.add_argument("--host", default=None)
     parser_up.add_argument("--sudo", action="store_true", default=False)
     parser_up.add_argument("--smp", action="append", nargs=2, default=[])
+    parser_up.add_argument("--config", default=None)
+
     parser_up.set_defaults(func=run_up)
 
     parser_down = subparsers.add_parser('down')
@@ -800,6 +806,17 @@ if __name__ == "__main__":
     del kwds['v']
     del kwds['vv']
     del kwds['func']
+
+    if 'config' in kwds:
+        if kwds['config'] is not None:
+            if yaml is None:
+                raise Exception("Can't find YAML parsing library")
+            with open(kwds['config'] ) as handle:
+                txt = handle.read()
+            nargs = yaml.load(txt)
+            for k,v in nargs.items():
+                kwds[k] = v
+        del kwds['config']
 
     try:
         func(**kwds)
