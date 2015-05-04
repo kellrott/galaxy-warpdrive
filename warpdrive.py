@@ -21,10 +21,11 @@ except ImportError:
 
 from xml.dom.minidom import parse as parseXML
 from glob import glob
+from socket import gethostname
 
-DEFAULT_CONFIG=os.path.join(os.environ["HOME"], ".warpdrive")
+DEFAULT_CONFIG=os.path.join(os.environ["HOME"], ".warpdrive", gethostname())
 if not os.path.exists(DEFAULT_CONFIG):
-    os.mkdir(DEFAULT_CONFIG)
+    os.makedirs(DEFAULT_CONFIG)
 
 class RequestException(Exception):
     def __init__(self, message):
@@ -275,7 +276,7 @@ def scan_directory(lpath, metadata_suffix=None):
 
 
 def run_up(name="galaxy", galaxy="bgruening/galaxy-stable", port=8080, host=None,
-    sudo=False, lib_data=[], auto_add=False, tool_data=None, file_store=None, metadata_suffix=None,
+    sudo=False, lib_data=[], auto_add=False, tool_data=None, metadata_suffix=None,
     tool_dir=None, config_dir=DEFAULT_CONFIG, work_dir=None, tool_docker=False, force=False,
     tool_images=None, smp=[], cpus=None,
     hold=False, key="HSNiugRFvgT574F43jZ7N9F3"):
@@ -345,15 +346,6 @@ def run_up(name="galaxy", galaxy="bgruening/galaxy-stable", port=8080, host=None
                 data_load.append(i)
             for k,v in m:
                 meta_data[k] = v
-
-    """
-    if file_store:
-        file_store = os.path.abspath(file_store)
-        dpath = "/parent/files"
-        #env['GALAXY_CONFIG_FILE_PATH'] = dpath
-        lib_mapping[file_store] = dpath
-        mounts[file_store] = dpath
-    """
 
     if tool_docker:
         common_volumes = ",".join( "%s:%s:ro" % (k,v) for k,v in lib_mapping.items() )
@@ -445,7 +437,6 @@ def run_up(name="galaxy", galaxy="bgruening/galaxy-stable", port=8080, host=None
             'lib_data' : list(os.path.abspath(a) for a in lib_data),
             'host' : web_host,
             'tool_dir' : os.path.abspath(tool_dir) if tool_dir is not None else None,
-            'file_store' : os.path.abspath(file_store) if file_store is not None else None,
             'tool_data' : os.path.abspath(tool_data) if tool_data is not None else None,
             'metadata_suffix' : metadata_suffix,
             'tool_docker' : tool_docker,
@@ -475,9 +466,8 @@ class RemoteGalaxy(object):
         req = requests.get(c_url, params=params)
         return req.json()
 
-    def post(self, path, payload):
+    def post(self, path, payload, params={}):
         c_url = self.url + path
-        params = {}
         params['key'] = self.api_key
         logging.debug("POSTING: %s %s" % (c_url, json.dumps(payload)))
         req = requests.post(c_url, data=json.dumps(payload), params=params, headers = {'Content-Type': 'application/json'} )
@@ -548,6 +538,9 @@ class RemoteGalaxy(object):
     def get_hda(self, history, hda):
         return self.get("/api/histories/%s/contents/%s" % (history, hda))
 
+    def get_dataset(self, id, src='hda' ):
+        return self.get("/api/datasets/%s?hda_ldda=%s" % (id, src))
+
     def download_hda(self, history, hda, dst):
         meta = self.get_hda(history, hda)
         self.download(meta['download_url'], dst)
@@ -571,7 +564,7 @@ class RemoteGalaxy(object):
         return self.get("/api/workflows/%s" % (wid))
 
     def call_workflow(self, request):
-        return self.post("/api/workflows", request )
+        return self.post("/api/workflows", request, params={'step_details' : True} )
 
     def get_job(self, jid):
         return self.get("/api/jobs/%s" % (jid), {'full' : True} )
@@ -738,24 +731,26 @@ def run_build(tool_dir, host=None, sudo=False, tool=None, no_cache=False, image_
                     for node, prefix, attrs, text in scan:
                         if 'type' in attrs and attrs['type'] == 'docker':
                             tag = text
-                            call_docker_build(
-                                host = host,
-                                sudo = sudo,
-                                no_cache=no_cache,
-                                tag=tag,
-                                dir=os.path.dirname(tool_conf)
-                            )
-
-                            if image_dir is not None:
-                                if not os.path.exists(image_dir):
-                                    os.mkdir(image_dir)
-                                image_file = os.path.join(image_dir, "docker_" + tag.split(":")[0] + ".tar")
-                                call_docker_save(
-                                    host=host,
-                                    sudo=sudo,
+                            dockerfile = os.path.join(os.path.dirname(tool_conf), "Dockerfile")
+                            if os.path.exists(dockerfile):
+                                call_docker_build(
+                                    host = host,
+                                    sudo = sudo,
+                                    no_cache=no_cache,
                                     tag=tag,
-                                    output=image_file
+                                    dir=os.path.dirname(tool_conf)
                                 )
+
+                                if image_dir is not None:
+                                    if not os.path.exists(image_dir):
+                                        os.mkdir(image_dir)
+                                    image_file = os.path.join(image_dir, "docker_" + tag.split(":")[0] + ".tar")
+                                    call_docker_save(
+                                        host=host,
+                                        sudo=sudo,
+                                        tag=tag,
+                                        output=image_file
+                                    )
 
 
 
