@@ -292,7 +292,8 @@ def run_up(name="galaxy", galaxy="bgruening/galaxy-stable", port=8080, host=None
 
     env = {
         "GALAXY_CONFIG_CHECK_MIGRATE_TOOLS" : "False",
-        "GALAXY_CONFIG_MASTER_API_KEY" : key
+        "GALAXY_CONFIG_MASTER_API_KEY" : key,
+        "GALAXY_CONFIG_CLEANUP_JOB" : "onsuccess"
     }
 
     mounts = {}
@@ -598,6 +599,7 @@ class RemoteGalaxy(object):
         if metadata is not None:
             data['extended_metadata'] = metadata
         data['filesystem_paths'] = datapath
+        logging.info("Pasting %s: %s" % (name, datapath))
         libset = self.post("/api/libraries/%s/contents" % library_id, data)
         print libset
         return libset[0]
@@ -726,7 +728,7 @@ def dom_scan_iter(node, stack, prefix):
 
 
 def run_build(tool_dir, host=None, sudo=False, tool=None, no_cache=False, image_dir=None):
-    for tool_conf in glob(os.path.join(tool_dir, "*", "*.xml")):
+    for tool_conf in glob(os.path.join(tool_dir, "*.xml")) + glob(os.path.join(tool_dir, "*", "*.xml")):
         logging.info("Scanning: " + tool_conf)
         dom = parseXML(tool_conf)
         s = dom_scan(dom.childNodes[0], "tool")
